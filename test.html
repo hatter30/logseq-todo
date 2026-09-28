@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>코어 테스트</title>
+<style>
+:root{--bg:#EDF0F2;--ink:#18212B;--ok:#1F6F78;--bad:#B4442F;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#12171C;--ink:#E3E8ED;--ok:#62B5BC;--bad:#E0816C;color-scheme:dark}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"Apple SD Gothic Neo",sans-serif}
+h1{font-size:1.1rem}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<h1 id="sum">실행 중</h1>
+<pre id="out"></pre>
+<script>
+// index.html의 CORE 부분만 뽑아서 실행한다. 로컬 서버로 열어야 한다(file:// 불가).
+(async()=>{
+  const src=await (await fetch('index.html',{cache:'no-store'})).text();
+  const core=src.split('// CORE-START')[1].split('// CORE-END')[0];
+  const C=new Function(core+'\nreturn{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64};')();
+  const{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64}=C;
+
+  const R=[];
+  const eq=(name,a,b)=>{const ok=JSON.stringify(a)===JSON.stringify(b);R.push({ok,name,a,b});};
+  const jre=fmtToRegex('yyyy_MM_dd');const T='2026-09-29';
+
+  /* parseFile */
+  const J=['- TODO [#A] 보고서 쓰기 #업무','  SCHEDULED: <2026-09-29 Tue .+1d>','\t- DOING 초안 [[프로젝트X]]','\t\t:LOGBOOK:','\t\tCLOCK: [2026-09-28 Mon 10:00]','\t\t:END:','- DONE 장보기','  DEADLINE: <2026-09-25 Fri>','- 그냥 메모','- LATER 책 읽기','  SCHEDULED: <2026-10-05 Mon 09:00 ++1w>',''].join('\n');
+  const r=parseFile('journals/2026_09_29.md',J,jre);const bs=r.blocks;
+  eq('저널 날짜',r.page.date,'2026-09-29');
+  eq('블록 수',bs.length,5);
+  eq('상태/우선순위/제목',[bs[0].marker,bs[0].pri,bs[0].title],['TODO','A','보고서 쓰기 #업무']);
+  eq('예정일/반복',[bs[0].scheduled,bs[0].repeat],['2026-09-29',true]);
+  eq('부모/레벨',[bs[1].parent===bs[0],bs[1].level],[true,1]);
+  eq('LOGBOOK 무시',bs[1].extra,[]);
+  eq('상위 참조 상속',[...bs[1].pathRefs].sort(),['2026-09-29','업무','프로젝트x'].sort());
+  eq('마감일',[bs[2].marker,bs[2].deadline,bs[2].due],['DONE','2026-09-25','2026-09-25']);
+  eq('시간 포함 예정일',[bs[4].scheduled,bs[4].repeat],['2026-10-05',true]);
+  const P=['tags:: 업무, [[집안일]]','alias:: 할일','','- TODO 설거지','  - 하위 메모'].join('\n');
+  const rp=parseFile('pages/생활___주방.md',P,jre);
+  eq('네임스페이스 이름',rp.page.name,'생활/주방');
+  eq('페이지 tags',rp.page.tags,['업무','집안일']);
+  eq('페이지 이름/tags/alias 상속',[...rp.blocks[0].pathRefs].sort(),['생활/주방','업무','집안일','할일'].sort());
+  eq('스페이스 2칸 들여쓰기',parseFile('pages/a.md','- a\n  - b\n    - c',jre).blocks.map(b=>b.level),[0,1,2]);
+  eq('코드 블록 안 - 무시',parseFile('pages/c.md','- 코드\n  ```\n  - 이건 블록 아님\n  ```\n- 다음',jre).blocks.length,2);
+  eq('저널 형식 yyyy-MM-dd',fileInfo('journals/2026-09-29.md',fmtToRegex('yyyy-MM-dd')).date,'2026-09-29');
+
+  /* query */
+  const q=(s,b)=>matchQuery(b,parseQuery(s),T);
+  const each=s=>bs.map(b=>q(s,b));
+  eq('is:open',each('is:open'),[true,true,false,false,true]);
+  eq('is:done',each('is:done'),[false,false,true,false,false]);
+  eq('is:doing',each('is:doing'),[false,true,false,false,false]);
+  eq('is:repeat',each('is:repeat'),[true,false,false,false,true]);
+  eq('due:today',each('due:today'),[true,false,false,false,false]);
+  eq('due:overdue는 완료 제외',each('due:overdue'),[false,false,false,false,false]);
+  eq('due:week',each('due:week'),[true,false,false,false,true]);
+  eq('due:+7d',each('due:+7d'),[true,false,false,false,true]);
+  eq('due:none is:task',each('due:none is:task'),[false,true,false,false,false]);
+  eq('#태그 상속',each('#업무'),[true,true,false,false,false]);
+  eq('[[페이지]]',each('[[프로젝트X]]'),[false,true,false,false,false]);
+  eq('제외 -#태그',each('is:task -#업무'),[false,false,true,false,true]);
+  eq('OR',each('is:done OR marker:later'),[false,false,true,false,true]);
+  eq('pri:a',each('pri:a'),[true,false,false,false,false]);
+  eq('단어',each('메모'),[false,false,false,true,false]);
+  eq('in:/page:',[q('in:journal',bs[0]),q('in:page',rp.blocks[0]),q('page:"생활/주방"',rp.blocks[0])],[true,true,true]);
+  eq('from:7d to:today',q('from:7d to:today',bs[0]),true);
+  eq('따옴표 값',parseQuery('page:"a b" #[[x y]]')[0].map(t=>[t.key,t.val]),[['page','a b'],['ref','x y']]);
+
+  /* edits */
+  eq('appendBlock 빈 파일',appendBlock('','TODO a','2026-09-30'),'- TODO a\n  SCHEDULED: <2026-09-30 Wed>\n');
+  eq('appendBlock 기존 파일',appendBlock('- x\n\n','b',null),'- x\n- b\n');
+  eq('appendBlock 빈 대시',appendBlock('-\n','b',null),'- b\n');
+  eq('setMarker DONE',setMarker(J,bs[0],'DONE').split('\n')[0],'- DONE [#A] 보고서 쓰기 #업무');
+  eq('setMarker 일반 블록으로',setMarker(J,bs[1],null).split('\n')[2],'\t- 초안 [[프로젝트X]]');
+  eq('setMarker 상태 추가',setMarker(J,bs[3],'TODO').split('\n')[8],'- TODO 그냥 메모');
+  eq('줄 밀려도 찾기',setMarker('- 새 줄\n'+J,bs[0],'DONE').split('\n')[1],'- DONE [#A] 보고서 쓰기 #업무');
+  let err='';try{setMarker('- 다른 내용',bs[0],'DONE');}catch(e){err=e.message;}
+  eq('못 찾으면 에러',!!err,true);
+  eq('예정일 변경, 반복 유지',setScheduled(J,bs[0],'2026-10-01').split('\n')[1],'  SCHEDULED: <2026-10-01 Thu .+1d>');
+  eq('예정일 변경, 시간 유지',setScheduled(J,bs[4],'2026-10-06').split('\n')[10],'  SCHEDULED: <2026-10-06 Tue 09:00 ++1w>');
+  eq('예정일 삭제',setScheduled(J,bs[4],null).split('\n').length,J.split('\n').length-1);
+  eq('예정일 추가, 드로어 앞',setScheduled(J,bs[1],'2026-10-02').split('\n').slice(2,5),['\t- DOING 초안 [[프로젝트X]]','\t  SCHEDULED: <2026-10-02 Fri>','\t\t:LOGBOOK:']);
+  eq('예정일 추가',setScheduled(J,bs[3],'2026-09-30').split('\n').slice(8,10),['- 그냥 메모','  SCHEDULED: <2026-09-30 Wed>']);
+  eq('반복 .+1d',advanceRepeats(J,bs[0],T).split('\n')[1],'  SCHEDULED: <2026-09-30 Wed .+1d>');
+  eq('반복 ++1w',advanceRepeats(J,bs[4],'2026-10-20').split('\n')[10],'  SCHEDULED: <2026-10-26 Mon 09:00 ++1w>');
+  eq('반복 +1m',advanceRepeats('- TODO x\n  SCHEDULED: <2026-01-31 Sat +1m>',{line:0,raw:'- TODO x'},T).split('\n')[1],'  SCHEDULED: <2026-03-03 Tue +1m>');
+  eq('반복 없음',advanceRepeats(J,bs[2],T),null);
+  const CR=J.replace(/\n/g,'\r\n');const rc=parseFile('journals/2026_09_29.md',CR,jre);const outCR=setMarker(CR,rc.blocks[0],'DONE');
+  eq('CRLF 유지',outCR.includes('\r\n')&&!/[^\r]\n/.test(outCR),true);
+  eq('UTF-8 base64 왕복',b64ToUtf8(utf8ToB64('한글 ✓ 🍎')),'한글 ✓ 🍎');
+
+  const bad=R.filter(x=>!x.ok);
+  document.getElementById('sum').innerHTML='<span class="'+(bad.length?'bad':'ok')+'">'+(R.length-bad.length)+'/'+R.length+' 통과</span>';
+  document.getElementById('out').innerHTML=R.map(x=>x.ok?'<span class="ok">✓</span> '+x.name
+    :'<span class="bad">✗ '+x.name+'\n   받음: '+JSON.stringify(x.a)+'\n   기대: '+JSON.stringify(x.b)+'</span>').join('\n');
+})().catch(e=>{document.getElementById('sum').innerHTML='<span class="bad">실행 실패</span>';document.getElementById('out').textContent=e.stack||e;});
+</script>
+</body>
+</html>
