@@ -77,8 +77,7 @@ main{max-width:680px;margin:0 auto;padding:14px 18px calc(110px + env(safe-area-
 .ck.done{background:var(--done);border-color:var(--done)}
 .ck.done::after{content:"";position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid var(--surface);border-width:0 2px 2px 0;transform:rotate(45deg)}
 .ck.cancel{border-color:var(--done);border-style:dashed}
-.ck.doing{border-color:var(--accent);box-shadow:inset 0 0 0 4px var(--surface),inset 0 0 0 11px var(--accent)}
-.ck.later{border-style:dotted}
+.ck.doing,.ck.later{border-style:dotted}
 .ck[aria-busy="true"]{opacity:.3}
 .dot{flex:none;width:22px;display:flex;justify-content:center;padding-top:.62em}
 .dot::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 4px var(--soft)}
@@ -127,7 +126,16 @@ code{font-size:.88em;background:var(--soft);padding:0 4px;border-radius:4px}
 .preview.bad{color:var(--danger)}
 .snip{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .snip button{border:1px dashed var(--line);background:none;border-radius:6px;padding:3px 8px;font-size:.8rem;color:var(--muted)}
-.blocktext{background:var(--bg);border-radius:10px;padding:10px 12px;font-size:.95rem;margin-bottom:4px;overflow-wrap:anywhere}
+.erow{display:flex;align-items:flex-start;gap:6px;margin-bottom:6px}
+.erow .mk{flex:none;margin:9px 0 0 2px;min-width:44px}
+.sheet textarea.etext{flex:1;min-width:0;min-height:0;resize:none;overflow:hidden;border:1px solid transparent;border-radius:8px;background:var(--bg);padding:6px 10px;font-size:16px;line-height:1.45}
+.sheet textarea.etext:focus{border-color:var(--accent);outline:none}
+.sheet textarea.etext.main{font-size:17px;font-weight:500;padding:9px 12px}
+.kids{margin-top:8px}
+.lb .hint{font-weight:400;color:var(--muted);font-size:.8rem}
+.xbtn{flex:none;width:32px;height:34px;background:none;border:0;padding:0;color:var(--muted);font-size:.95rem}
+.erow.gone .etext{text-decoration:line-through;opacity:.45}
+.erow.gone .mk{opacity:.45}
 .sel{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:9px 10px;font-size:16px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
@@ -211,6 +219,9 @@ input[type=search],input[type=text],input[type=password],input[type=number]{
 <div class="sheet" id="shAdd" role="dialog" aria-modal="true" aria-labelledby="addH" hidden>
   <h3 id="addH">오늘 저널에 추가</h3>
   <textarea id="cap" placeholder="한 줄에 하나씩 적어요" aria-label="추가할 내용"></textarea>
+  <label class="lb">하위 블록 <span class="hint">(마지막 줄 아래에 붙어요)</span></label>
+  <div class="kids" id="addKids"></div>
+  <button type="button" class="linkbtn" id="addKidQ">+ 하위 블록</button>
   <label class="lb">상태</label>
   <div class="seg" id="addMarker">
     <button type="button" data-m="NOW">NOW</button>
@@ -236,13 +247,12 @@ input[type=search],input[type=text],input[type=password],input[type=number]{
 <!-- block actions -->
 <div class="sheet" id="shAct" role="dialog" aria-modal="true" aria-labelledby="actH" hidden>
   <h3 id="actH" hidden>블록</h3>
-  <div class="blocktext" id="actText"></div>
-  <div class="sub" id="actSub"></div>
+  <div id="actEdit"></div>
   <label class="lb">상태</label>
   <div class="seg" id="actMarker">
     <button type="button" data-m="NOW">NOW</button>
     <button type="button" data-m="LATER">LATER</button>
-    <button type="button" data-m="DONE">완료</button>
+    <button type="button" data-m="DONE">DONE</button>
     <button type="button" data-m="">일반 블록</button>
   </div>
   <label class="lb">예정일</label>
@@ -255,8 +265,9 @@ input[type=search],input[type=text],input[type=password],input[type=number]{
   </div>
   <div class="sheet-foot">
     <button type="button" class="linkbtn" id="actPage">이 페이지 전체 보기</button>
-    <div class="r"><button type="button" class="ghost" data-close>닫기</button></div>
+    <div class="r"><button type="button" class="ghost" data-close>닫기</button><button type="button" class="primary" id="actSave" disabled>저장</button></div>
   </div>
+  <button type="button" class="danger-link" id="actDel">이 블록 삭제</button>
 </div>
 
 <!-- tab editor -->
@@ -339,7 +350,7 @@ function finalize(b){
   let c=b.first;
   const mk=c.match(MARKER_RE);b.marker=mk?mk[1]:null;if(mk)c=c.slice(mk[0].length);
   const pm=c.match(/\[#([ABC])\]\s*/);b.pri=pm?pm[1]:null;if(pm)c=c.replace(pm[0],'');
-  b.props={};b.extra=[];b.scheduled=null;b.deadline=null;b.repeat=false;
+  b.props={};b.extra=[];b.scheduled=null;b.deadline=null;b.repeat=false;b.edited=null;
   const fp=!b.marker&&c.match(PROP_RE);
   if(fp){b.props[fp[1].toLowerCase()]=fp[2];c='';}
   b.title=c.trim();
@@ -375,12 +386,12 @@ function parseFile(path,text,jre){
       const ws=m[1];
       const level=(ws.match(/\t/g)||[]).length+Math.floor(ws.replace(/\t/g,'').length/2);
       while(stack.length&&stack[stack.length-1].level>=level)stack.pop();
-      cur={id:++UID,page,line:i,raw:line,level,parent:stack.length?stack[stack.length-1]:null,first:(m[2]||'').trim(),body:[]};
+      cur={id:++UID,page,line:i,raw:line,level,parent:stack.length?stack[stack.length-1]:null,first:(m[2]||'').trim(),body:[],end:i+1};
       blocks.push(cur);stack.push(cur);
       if(fenceToggle(cur.first))inCode=!inCode;
     }else{
       const t=line.trim();
-      if(cur){if(t!==''||inCode)cur.body.push(t);if(fenceToggle(t))inCode=!inCode;}
+      if(cur){if(t!==''||inCode){cur.body.push(t);cur.end=i+1;}if(fenceToggle(t))inCode=!inCode;}
       else if(t){const p=t.match(PROP_RE);if(p)page.props[p[1].toLowerCase()]=p[2];}
     }
   }
@@ -396,9 +407,18 @@ function parseFile(path,text,jre){
   }
   return{page,blocks};
 }
+/* git blame 범위 [[시작줄, 끝줄(1부터, 포함), ms]] → 블록 자기 줄(b.line~b.end) 중 가장 최근 날짜 */
+function applyBlame(blocks,ranges){
+  const ts=[];
+  for(const[s,e,t]of ranges)for(let i=s;i<=e;i++)ts[i-1]=t;
+  for(const b of blocks){
+    let m=0;for(let i=b.line;i<b.end;i++)if(ts[i]>m)m=ts[i];
+    b.edited=m?isoOf(new Date(m)):null;
+  }
+}
 
 /* query */
-const QKEYS=new Set(['is','marker','ref','tag','page','in','from','to','due','pri']);
+const QKEYS=new Set(['is','marker','ref','tag','page','in','from','to','due','pri','edited']);
 function parseTerms(q){
   const toks=q.match(/-?(?:[a-zA-Z]+:)?(?:"[^"]*"|#?\[\[[^\]]*\]\]|\S+)/g)||[];
   const terms=[];
@@ -454,6 +474,12 @@ function matchTerm(b,t,today){
       const d=relDate(v,today);return d?b.due===d:true;
     }
     case'pri':return b.pri===v.toUpperCase();
+    case'edited':{
+      if(v==='any')return!!b.edited;
+      if(v==='none')return!b.edited;
+      const d=relDate(v,today);if(!d)return true;
+      return/^\d+d$/.test(v)?!!b.edited&&b.edited>=d:b.edited===d;
+    }
   }
   return true;
 }
@@ -478,6 +504,51 @@ function setMarker(text,b,nm){
   const m=ls[i].match(/^([ \t]*-)(?:[ \t]+(.*))?$/);
   let rest=m[2]||'';const mk=rest.match(MARKER_RE);if(mk)rest=rest.slice(mk[0].length);
   ls[i]=m[1]+' '+(nm?nm+(rest?' ':''):'')+rest;
+  return ls.join(eol);
+}
+// 블록 첫 줄에서 들여쓰기·대시·상태는 두고 나머지 글자만 바꾼다. 줄바꿈은 공백으로.
+function titleLine(raw,title){
+  const m=raw.match(/^([ \t]*-)(?:[ \t]+(.*))?$/);
+  const mk=(m[2]||'').match(MARKER_RE);
+  const t=title.replace(/\s*[\r\n]+\s*/g,' ').trim();
+  return m[1]+' '+(mk?mk[1]+(t?' ':''):'')+t;
+}
+function setTitle(text,b,title){
+  const[ls,eol]=splitEol(text);const i=findLine(ls,b);
+  ls[i]=titleLine(ls[i],title);
+  return ls.join(eol);
+}
+// b의 마지막 하위 블록(손자 포함) 다음 줄에 직계 하위 블록을 붙인다. 들여쓰기는 기존 하위 블록을 따르고, 없으면 탭 한 칸.
+function indentLevel(ws){return(ws.match(/\t/g)||[]).length+Math.floor(ws.replace(/\t/g,'').length/2);}
+// i줄 블록과 그 하위 블록(손자 포함)이 끝나는 줄(제외). 끝의 빈 줄은 포함하지 않는다.
+function subtreeEnd(ls,i){
+  const bl=indentLevel(ls[i].match(/^[ \t]*/)[0]);
+  let end=blockEnd(ls,i);
+  while(end<ls.length){
+    const m=ls[end].match(/^([ \t]*)-(?:[ \t]|$)/);
+    if(!m||indentLevel(m[1])<=bl)break;
+    end=blockEnd(ls,end);
+  }
+  while(end>i+1&&ls[end-1].trim()==='')end--;
+  return end;
+}
+function addChildren(text,b,items){
+  const add=items.map(t=>t.replace(/\s*[\r\n]+\s*/g,' ').trim()).filter(Boolean);
+  if(!add.length)return text;
+  const[ls,eol]=splitEol(text);const i=findLine(ls,b);
+  const base=ls[i].match(/^[ \t]*/)[0],bl=indentLevel(base);
+  const end=subtreeEnd(ls,i);
+  let kid=null;
+  for(let j=i+1;j<end&&kid===null;j++){const m=ls[j].match(/^([ \t]*)-(?:[ \t]|$)/);if(m&&indentLevel(m[1])===bl+1)kid=m[1];}
+  if(kid===null)kid=base+(base&&!base.includes('\t')?'  ':'\t');
+  ls.splice(end,0,...add.map(t=>kid+'- '+t));
+  return ls.join(eol);
+}
+// 블록들을 하위 블록째 지운다. 아래쪽부터 지워서 줄 번호가 밀리지 않게 한다.
+function removeBlocks(text,bs){
+  if(!bs.length)return text;
+  const[ls,eol]=splitEol(text);
+  for(const b of[...bs].sort((x,y)=>y.line-x.line)){const i=findLine(ls,b);ls.splice(i,subtreeEnd(ls,i)-i);}
   return ls.join(eol);
 }
 function setScheduled(text,b,iso){
@@ -560,6 +631,12 @@ async function gh(path,opts={}){
     e.remaining=r.headers.get('x-ratelimit-remaining');try{e.detail=(await r.json()).message;}catch(x){}throw e;}
   return r.json();
 }
+async function gql(query,variables){
+  const r=await fetch('https://api.github.com/graphql',{method:'POST',cache:'no-store',
+    headers:{Authorization:'Bearer '+S.token,'Content-Type':'application/json'},body:JSON.stringify({query,variables})});
+  if(!r.ok){const e=new Error('HTTP '+r.status);e.status=r.status;throw e;}
+  return r.json();
+}
 function errMsg(e){
   if(e&&e.status===401)return'토큰이 올바르지 않거나 만료됐어요. 설정에서 다시 입력하세요.';
   if(e&&e.status===403)return e.remaining==='0'?'GitHub 요청 한도에 걸렸어요. 한 시간 뒤 다시 해보세요.':'권한이 없어요. 토큰의 Contents 권한과 레포 선택을 확인하세요.';
@@ -577,6 +654,7 @@ function rebuild(){
   const blocks=[],byPath=new Map(),byId=new Map();
   for(const f of FILES.values()){
     const r=parseFile(f.path,f.text,jre);byPath.set(f.path,r);
+    if(f.blame&&f.blame.sha===f.sha)applyBlame(r.blocks,f.blame.ranges);
     for(const b of r.blocks){blocks.push(b);byId.set(b.id,b);}
   }
   IDX={blocks,byPath,byId};
@@ -590,6 +668,27 @@ function runQuery(q){
 }
 
 /* ---------- sync & write ---------- */
+// 줄별 마지막 수정 시각(git blame). 파일 10개씩 GraphQL 한 번. 받은 시점의 파일 sha가 캐시와 같을 때만 저장.
+async function fetchBlame(paths,onStep){
+  const[o,r]=S.repo.split('/');const e=await ensureBranch();
+  const chunks=[];for(let i=0;i<paths.length;i+=10)chunks.push(paths.slice(i,i+10));
+  let done=0;
+  await pool(chunks,3,async ch=>{
+    const q='query($o:String!,$r:String!,$e:String!){repository(owner:$o,name:$r){object(expression:$e){... on Commit{'
+      +ch.map((p,i)=>'b'+i+':blame(path:'+JSON.stringify(p)+'){ranges{startingLine endingLine commit{authoredDate}}} f'+i+':file(path:'+JSON.stringify(p)+'){oid}').join(' ')+'}}}}';
+    try{
+      const j=await gql(q,{o,r,e});
+      const c=j.data&&j.data.repository&&j.data.repository.object;
+      if(c)for(let i=0;i<ch.length;i++){
+        const f=FILES.get(ch[i]),bl=c['b'+i],fo=c['f'+i];
+        if(!f||!bl||!fo||fo.oid!==f.sha)continue;
+        f.blame={sha:f.sha,ranges:bl.ranges.map(x=>[x.startingLine,x.endingLine,Date.parse(x.commit.authoredDate)])};
+        await DB.put(f);
+      }
+    }catch(err){}
+    done+=ch.length;if(onStep)onStep(done,paths.length);
+  });
+}
 async function sync(quiet){
   if(syncing)return;
   if(!ready()){showSettings();if(!quiet)toast('먼저 토큰과 레포를 입력하세요.');return;}
@@ -616,6 +715,8 @@ async function sync(quiet){
       done++;progress(done/toGet.length);status('바뀐 파일 받는 중 '+done+'/'+toGet.length);
     });
     for(const p of toDel){FILES.delete(p);await DB.del(p);}
+    const needBlame=[...FILES.values()].filter(f=>!f.blame||f.blame.sha!==f.sha).map(f=>f.path);
+    if(needBlame.length){progress(0);await fetchBlame(needBlame,(d,n)=>{progress(d/n);status('수정일 받는 중 '+d+'/'+n);});}
     S.lastSync=Date.now();saveLS();
     rebuild();
     if(!quiet||toGet.length||toDel.length)
@@ -638,32 +739,63 @@ async function writeFile(path,transform,message,allowCreate){
     try{
       const res=await gh(url,{method:'PUT',body:JSON.stringify(body)});
       const f={path,sha:res.content.sha,text:next};FILES.set(path,f);await DB.put(f);
-      rebuild();return;
+      rebuild();fetchBlame([path]).then(rebuild);return;
     }catch(e){if((e.status===409||e.status===422)&&attempt===0)continue;throw e;}
   }
 }
 function needSetup(){if(ready())return false;showSettings();toast('먼저 토큰과 레포를 입력하세요.');return true;}
 
 
-async function changeMarker(b,nm,el){
+/* 블록 시트에서 저장 전인 변경: pend={edits:[{b,text}], news:[새 하위 블록 글자]}. 모두 b와 같은 파일. */
+const NO_PEND={edits:[],news:[],dels:[]};
+// 글자 편집 → 새 하위 블록 순으로 적용하고, 첫 줄이 바뀐 b(bb)를 돌려준다. 이후 상태/날짜 변경은 bb로.
+function applyPending(t,b,pend){
+  for(const e of pend.edits)t=setTitle(t,e.b,e.text);
+  const e=pend.edits.find(x=>x.b===b);
+  const bb=e?{...b,raw:titleLine(b.raw,e.text)}:b;
+  t=removeBlocks(t,pend.dels||[]);  // 지우는 건 b 아래쪽 줄이라 b의 줄 번호는 그대로
+  return[addChildren(t,bb,pend.news),bb];
+}
+
+async function changeMarker(b,nm,el,pend=NO_PEND){
   if(needSetup())return;
   const today=todayISO();
   let repeated=false;
   if(el)el.setAttribute('aria-busy','true');
   try{
-    await writeFile(b.page.path,t=>{
-      if(nm==='DONE'&&b.repeat){const r=advanceRepeats(t,b,today);if(r){repeated=true;return setMarker(r,{...b},'LATER');}}
-      return setMarker(t,b,nm);
+    await writeFile(b.page.path,t0=>{
+      const[t,bb]=applyPending(t0,b,pend);
+      if(nm==='DONE'&&b.repeat){const r=advanceRepeats(t,bb,today);if(r){repeated=true;return setMarker(r,bb,'LATER');}}
+      return setMarker(t,bb,nm);
     },(nm||'plain')+': '+(b.title||'').slice(0,60),false);
     toast(repeated?'다음 반복 날짜로 넘겼어요.':nm==='DONE'?'완료로 바꿨어요.':nm?'상태를 바꿨어요.':'일반 블록으로 바꿨어요.');
   }catch(e){if(el)el.removeAttribute('aria-busy');toast(errMsg(e),true);}
 }
-async function changeDate(b,iso){
+async function changeDate(b,iso,pend=NO_PEND){
   if(needSetup())return;
   try{
-    await writeFile(b.page.path,t=>setScheduled(t,b,iso),(iso?'schedule '+iso:'unschedule')+': '+(b.title||'').slice(0,60),false);
+    await writeFile(b.page.path,t0=>{const[t,bb]=applyPending(t0,b,pend);return setScheduled(t,bb,iso);},(iso?'schedule '+iso:'unschedule')+': '+(b.title||'').slice(0,60),false);
     toast(iso?krDate(iso)+'로 예정했어요.':'예정일을 없앴어요.');
   }catch(e){toast(errMsg(e),true);}
+}
+async function deleteBlock(b){
+  if(needSetup())return;
+  const btn=$('#actDel');btn.disabled=true;btn.textContent='삭제하는 중';
+  try{
+    await writeFile(b.page.path,t=>removeBlocks(t,[b]),'delete: '+(b.title||'').slice(0,60),false);
+    closeSheet();toast('블록을 삭제했어요.');
+  }catch(e){toast(errMsg(e),true);}
+  finally{btn.disabled=false;}
+}
+async function saveEdits(b,pend){
+  if(needSetup())return;
+  const btn=$('#actSave');btn.disabled=true;btn.textContent='저장하는 중';
+  try{
+    const n=pend.news.length,d=pend.dels.length;
+    await writeFile(b.page.path,t=>applyPending(t,b,pend)[0],'edit: '+(b.title||'').slice(0,60)+(n?' (+'+n+')':'')+(d?' (-'+d+')':''),false);
+    closeSheet();toast(n||d?'하위 블록 '+[n?n+'개 추가':'',d?d+'개 삭제':''].filter(Boolean).join(', ')+'하고 저장했어요.':'저장했어요.');
+  }catch(e){toast(errMsg(e),true);}
+  finally{btn.textContent='저장';btn.disabled=false;}
 }
 
 /* ---------- render ---------- */
@@ -836,6 +968,7 @@ function openAdd(){
   pressOne($('#addMarker'),$('#addMarker [data-m="NOW"]'));
   pressOne($('#addDate'),$('#addDate [data-d="'+addDate+'"]'));$('#addPickLbl').textContent='날짜 선택';
   $('#tagWrap').hidden=!d.tags.length;$('#tagLbl').textContent=d.tags.map(tagText).join(' ')+' 붙이기';$('#tagWrap').dataset.tags=JSON.stringify(d.tags);
+  $('#addKids').innerHTML='';
   sheet('#shAdd');setTimeout(()=>$('#cap').focus(),50);
 }
 async function doAdd(){
@@ -850,31 +983,88 @@ async function doAdd(){
     for(const t of tags){if(!low.includes('#'+t.toLowerCase())&&!low.includes('[['+t.toLowerCase()+']]'))c+=' '+tagText(t);}
     return c;
   });
+  const kids=[...document.querySelectorAll('#addKids textarea')].map(el=>el.value).filter(v=>v.trim());
   const btn=$('#addBtn');btn.disabled=true;btn.textContent='추가하는 중';
   const today=todayISO();
   try{
-    await writeFile(journalPath(today),t=>items.reduce((acc,c)=>appendBlock(acc,c,sched),t),'journal '+today+': add '+items.length,true);
-    $('#cap').value='';closeSheet();toast(items.length+'개를 추가했어요.');
+    await writeFile(journalPath(today),t=>{
+      t=items.reduce((acc,c)=>appendBlock(acc,c,sched),t);
+      if(!kids.length)return t;
+      // 하위 블록은 방금 붙인 마지막 블록 아래에
+      const raw='- '+items[items.length-1];
+      return addChildren(t,{line:splitEol(t)[0].lastIndexOf(raw),raw},kids);
+    },'journal '+today+': add '+items.length+(kids.length?' (+'+kids.length+')':''),true);
+    $('#cap').value='';$('#addKids').innerHTML='';closeSheet();
+    toast(items.length+'개를 추가했어요.'+(kids.length?' 하위 블록 '+kids.length+'개도 넣었어요.':''));
   }catch(e){toast(errMsg(e),true);}
   finally{btn.disabled=false;btn.textContent='추가';}
 }
 
 /* block actions */
 let actBlock=null;
+function editText(b){return b.first.replace(MARKER_RE,'').trim();}
+function kidsOf(b){
+  const r=IDX.byPath.get(b.page.path);if(!r)return[];
+  const bs=r.blocks,out=[];
+  for(let j=bs.indexOf(b)+1;j<bs.length&&bs[j].level>b.level;j++)if(!bs[j].propsOnly)out.push(bs[j]);
+  return out;
+}
+function actPending(){
+  const edits=[],news=[],gone=new Set();
+  document.querySelectorAll('#actEdit textarea').forEach(el=>{
+    if(el.dataset.new){if(el.value.trim())news.push(el.value);return;}
+    const b=IDX.byId.get(+el.dataset.bid);if(!b)return;
+    if(el.closest('.gone')){gone.add(b);return;}
+    if(el.value.replace(/\s*[\r\n]+\s*/g,' ').trim()!==editText(b))edits.push({b,text:el.value});
+  });
+  // 부모도 지워지면 하위는 부모와 함께 지워지므로 뺀다
+  const dels=[...gone].filter(b=>{for(let p=b.parent;p;p=p.parent)if(gone.has(p))return false;return true;});
+  return{edits,news,dels};
+}
+function dirty(p){return p.edits.length+p.news.length+p.dels.length>0;}
+const XBTN='<button type="button" class="xbtn" data-del="1" aria-label="삭제">✕</button>';
+function addKidRow(box=$('#kids')){
+  const d=document.createElement('div');d.className='erow';d.dataset.depth='1';
+  d.innerHTML='<textarea class="etext" rows="1" data-new="1" aria-label="새 하위 블록" placeholder="새 하위 블록 (LATER로 시작하면 할 일)" enterkeyhint="next"></textarea>'+XBTN;
+  box.appendChild(d);const ta=d.querySelector('textarea');grow(ta);ta.focus();
+}
+// ✕: 새 줄은 바로 없애고, 기존 블록은 하위 블록까지 '삭제 예정'으로 표시(다시 누르면 되살림). 저장할 때 반영.
+function toggleDel(btn){
+  const row=btn.closest('.erow');
+  if(row.querySelector('[data-new]')){row.remove();}
+  else{
+    const on=!row.classList.contains('gone'),dp=+row.dataset.depth;
+    const mark=(r,top)=>{r.classList.toggle('gone',on);r.querySelector('textarea').disabled=on;
+      const x=r.querySelector('.xbtn');x.textContent=on&&top?'↺':'✕';x.setAttribute('aria-label',on&&top?'되살리기':'삭제');x.hidden=on&&!top;};
+    mark(row,true);
+    for(let r=row.nextElementSibling;r&&+r.dataset.depth>dp;r=r.nextElementSibling)if(!r.querySelector('[data-new]'))mark(r,false);
+  }
+  $('#actSave').disabled=!dirty(actPending());
+}
+function grow(el){el.style.height='auto';el.style.height=el.scrollHeight+2+'px';}
 function openAct(id){
   const b=IDX.byId.get(id);if(!b)return;actBlock=b;
-  $('#actText').innerHTML=(b.title?inline(b.title):'(빈 블록)')+(b.extra.length?'<span class="ex">'+b.extra.slice(0,6).map(inline).join('\n')+'</span>':'');
+  const kids=kidsOf(b);
+  const row=(x,depth)=>'<div class="erow" data-depth="'+depth+'" style="padding-left:'+(Math.max(0,depth-1)*20)+'px">'
+    +'<textarea class="etext'+(depth?'':' main')+'" rows="1" data-bid="'+x.id+'" aria-label="'+(depth?'하위 블록':'블록 내용')+'" enterkeyhint="done"></textarea>'
+    +(depth&&x.marker?'<span class="mk">'+esc(x.marker)+'</span>':'')+(depth?XBTN:'')+'</div>';
+  $('#actEdit').innerHTML=row(b,0)+'<div class="sub" id="actSub"></div>'+'<label class="lb">하위 블록</label><div class="kids" id="kids">'+kids.map(k=>row(k,k.level-b.level)).join('')+'</div>'
+    +'<button type="button" class="linkbtn" id="addKid">+ 하위 블록</button>';
+  $('#actEdit').querySelectorAll('textarea').forEach(el=>{el.value=editText(IDX.byId.get(+el.dataset.bid));});
+  $('#actSave').disabled=true;
+  const del=$('#actDel');del.dataset.armed='';del.textContent='이 블록 삭제';
   const sub=[pageLabel(b.page)];if(b.scheduled)sub.push('예정 '+shortDate(b.scheduled)+(b.repeat?' ↻':''));if(b.deadline)sub.push('마감 '+shortDate(b.deadline));
   $('#actSub').textContent=sub.join(', ');
   const cur=DOING.has(b.marker)?'NOW':b.marker==='TODO'?'LATER':(b.marker||'');
   pressOne($('#actMarker'),$('#actMarker [data-m="'+cur+'"]'));
   $('#actPick').value=b.scheduled||'';
   sheet('#shAct');
+  $('#actEdit').querySelectorAll('textarea').forEach(grow);
 }
 
 /* tab editor */
 let editId=null;
-const SNIPS=['is:now','is:later','is:open','due:today','due:overdue','due:+7d','due:none','#태그','[[페이지]]','in:journal','from:7d','pri:a','OR','-#태그'];
+const SNIPS=['is:now','is:later','is:open','due:today','due:overdue','due:+7d','due:none','edited:7d','#태그','[[페이지]]','in:journal','from:7d','pri:a','OR','-#태그'];
 function openTabEditor(id,q){
   editId=id;const t=id?S.tabs.find(x=>x.id===id):null;
   $('#tabH').textContent=t?'탭 편집':'새 탭';
@@ -916,6 +1106,7 @@ const HELP=[
   ['due:+7d due:week','오늘부터 7일 안에'],
   ['due:any due:none','날짜가 있는 것, 없는 것'],
   ['due:2026-10-02','특정 날짜'],
+  ['edited:7d edited:today','그 기간에 마지막으로 고친 블록(GitHub 커밋 시각 기준)'],
   ['in:journal in:page','저널만, 일반 페이지만'],
   ['page:이름','페이지 이름에 포함'],
   ['from:7d to:today','저널 날짜 범위'],
@@ -937,17 +1128,40 @@ document.addEventListener('click',e=>{
   if(t.dataset.edit){openTabEditor(t.dataset.edit);return;}
   if(t.dataset.toggle){const b=IDX.byId.get(+t.dataset.toggle);if(b)changeMarker(b,OPEN.has(b.marker)?'DONE':'LATER',t);return;}
   if(t.dataset.open){openAct(+t.dataset.open);return;}
+  if(t.id==='addKid'){addKidRow();return;}
+  if(t.id==='addKidQ'){addKidRow($('#addKids'));return;}
+  if(t.dataset.del){toggleDel(t);return;}
   if(t.id==='moreBtn'){LIMIT+=200;renderList();return;}
   if(t.dataset.snip){const i=$('#tQuery');i.value=(i.value.trim()+' '+t.dataset.snip).trim();tabPreview();i.focus();return;}
   if(t.closest('#addMarker')&&t.dataset.m!==undefined){addMarker=t.dataset.m;pressOne($('#addMarker'),t);return;}
   if(t.closest('#addDate')&&t.dataset.d!==undefined){addDate=t.dataset.d;pressOne($('#addDate'),t);$('#addPickLbl').textContent='날짜 선택';return;}
-  if(t.closest('#actMarker')&&t.dataset.m!==undefined&&actBlock){const b=actBlock;closeSheet();changeMarker(b,t.dataset.m||null);return;}
-  if(t.closest('#actDate')&&t.dataset.d&&actBlock){const b=actBlock;closeSheet();changeDate(b,t.dataset.d==='none'?null:resolveDay(t.dataset.d));return;}
+  if(t.closest('#actMarker')&&t.dataset.m!==undefined&&actBlock){const b=actBlock,pd=actPending();closeSheet();changeMarker(b,t.dataset.m||null,null,pd);return;}
+  if(t.closest('#actDate')&&t.dataset.d&&actBlock){const b=actBlock,pd=actPending();closeSheet();changeDate(b,t.dataset.d==='none'?null:resolveDay(t.dataset.d),pd);return;}
 });
 $('#scrim').onclick=closeSheet;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 $('#addPick').onchange=e=>{if(!e.target.value)return;addDate=e.target.value;pressOne($('#addDate'),$('#addPickLbl'));$('#addPickLbl').textContent=shortDate(addDate);};
-$('#actPick').onchange=e=>{if(!e.target.value||!actBlock)return;const b=actBlock;closeSheet();changeDate(b,e.target.value);};
+$('#actPick').onchange=e=>{if(!e.target.value||!actBlock)return;const b=actBlock,pd=actPending();closeSheet();changeDate(b,e.target.value,pd);};
+$('#actEdit').addEventListener('input',e=>{if(e.target.tagName!=='TEXTAREA')return;grow(e.target);$('#actSave').disabled=!dirty(actPending());});
+// Enter: 새 하위 블록 줄에서는 한 줄 더, 나머지는 입력 끝내기(블록이 쪼개지지 않게 줄바꿈은 막음)
+function kidEnter(e){
+  if(e.target.tagName!=='TEXTAREA'||e.key!=='Enter'||e.isComposing)return;
+  e.preventDefault();
+  if(e.target.dataset.new&&e.target.value.trim())addKidRow(e.target.closest('.kids'));else e.target.blur();
+}
+$('#actEdit').addEventListener('keydown',kidEnter);
+$('#addKids').addEventListener('keydown',kidEnter);
+$('#addKids').addEventListener('input',e=>{if(e.target.tagName==='TEXTAREA')grow(e.target);});
+// 두 번 눌러야 삭제. 첫 번째는 무엇이 지워지는지 알려 주기만 한다.
+$('#actDel').onclick=()=>{
+  const b=actBlock,btn=$('#actDel');if(!b)return;
+  if(!btn.dataset.armed){
+    const n=kidsOf(b).length;btn.dataset.armed='1';
+    btn.textContent='한 번 더 누르면 '+(n?'하위 블록 '+n+'개와 함께 ':'')+'삭제돼요';return;
+  }
+  deleteBlock(b);
+};
+$('#actSave').onclick=()=>{const pd=actPending();if(actBlock&&dirty(pd))saveEdits(actBlock,pd);};
 $('#actPage').onclick=()=>{if(!actBlock)return;const p=actBlock.page;closeSheet();$('#qhead').innerHTML='';TMP={q:'page:"'+p.lname+'"',sort:'page',group:'none'};VIEW='list';showList();};
 $('#fab').onclick=openAdd;
 $('#addBtn').onclick=doAdd;
@@ -988,7 +1202,8 @@ document.addEventListener('visibilitychange',()=>{
   const all=await DB.all();
   if(all)for(const f of all)FILES.set(f.path,f);
   if(!curTab()&&S.tabs.length)S.cur=S.tabs[0].id;
-  if(ready()){showList();sync(true);}else{rebuild();showSettings();}
+  rebuild();
+  if(ready()){showList();sync(true);}else showSettings();
 })();
 </script>
 </body>

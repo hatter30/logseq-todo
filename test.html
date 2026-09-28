@@ -21,8 +21,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}
 (async()=>{
   const src=await (await fetch('index.html',{cache:'no-store'})).text();
   const core=src.split('// CORE-START')[1].split('// CORE-END')[0];
-  const C=new Function(core+'\nreturn{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64};')();
-  const{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64}=C;
+  const C=new Function(core+'\nreturn{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64,applyBlame,titleLine,setTitle,addChildren,removeBlocks};')();
+  const{parseFile,parseQuery,matchQuery,appendBlock,setMarker,setScheduled,advanceRepeats,fmtToRegex,fileInfo,b64ToUtf8,utf8ToB64,applyBlame,titleLine,setTitle,addChildren,removeBlocks}=C;
 
   const R=[];
   const eq=(name,a,b)=>{const ok=JSON.stringify(a)===JSON.stringify(b);R.push({ok,name,a,b});};
@@ -93,6 +93,76 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere}
   const CR=J.replace(/\n/g,'\r\n');const rc=parseFile('journals/2026_09_29.md',CR,jre);const outCR=setMarker(CR,rc.blocks[0],'DONE');
   eq('CRLF 유지',outCR.includes('\r\n')&&!/[^\r]\n/.test(outCR),true);
   eq('UTF-8 base64 왕복',b64ToUtf8(utf8ToB64('한글 ✓ 🍎')),'한글 ✓ 🍎');
+
+  /* 글자 편집 */
+  eq('titleLine 상태 유지',titleLine('- NOW [#A] 보고서 쓰기 #업무','[#B] 보고서 마무리 #업무'),'- NOW [#B] 보고서 마무리 #업무');
+  eq('titleLine 들여쓰기 유지',titleLine('\t\t- LATER 표','표 만들기'),'\t\t- LATER 표 만들기');
+  eq('titleLine 일반 블록',titleLine('  - 메모','메모 수정'),'  - 메모 수정');
+  eq('titleLine 줄바꿈은 공백',titleLine('- NOW a','첫째\n 둘째 '),'- NOW 첫째 둘째');
+  eq('titleLine 빈 내용',[titleLine('- NOW a',''),titleLine('- a','')],['- NOW','- ']);
+  const ed=setTitle(J,bs[1],'초안 완성 [[프로젝트X]]').split('\n');
+  eq('setTitle 하위 블록, 나머지 그대로',[ed[2],ed[3],ed.length],['\t- DOING 초안 완성 [[프로젝트X]]','\t\t:LOGBOOK:',J.split('\n').length]);
+  eq('setTitle 뒤 SCHEDULED 유지',setTitle(J,bs[0],'보고서 다시').split('\n').slice(0,2),['- TODO 보고서 다시','  SCHEDULED: <2026-09-29 Tue .+1d>']);
+  const t2=setTitle(setTitle(J,bs[0],'가'),bs[1],'나').split('\n');
+  eq('여러 블록 연속 편집',[t2[0],t2[2]],['- TODO 가','\t- DOING 나']);
+  const nb={...bs[0],raw:titleLine(bs[0].raw,'가')};
+  eq('편집 후 상태 변경',setMarker(setTitle(J,bs[0],'가'),nb,'DONE').split('\n')[0],'- DONE 가');
+  let e2='';try{setTitle('- 다른 내용',bs[0],'x');}catch(e){e2=e.message;}
+  eq('setTitle 못 찾으면 에러',!!e2,true);
+  const trc=parseFile('journals/2026_09_29.md',CR,jre).blocks;const outT=setTitle(CR,trc[0],'x');
+  eq('setTitle CRLF 유지',outT.includes('\r\n')&&!/[^\r]\n/.test(outT),true);
+
+  /* 하위 블록 추가 */
+  const K='- NOW 발표 준비\n  SCHEDULED: <2026-10-02 Fri>\n\t- LATER 슬라이드\n\t\t- 표지\n\t\t  메모 줄\n\t- 리허설\n- 다른 블록\n';
+  const kb=parseFile('pages/k.md',K,jre).blocks;
+  eq('하위 블록 맨 뒤(손자 다음)에 추가',addChildren(K,kb[0],['새 일','LATER 새 할 일']).split('\n'),
+    ['- NOW 발표 준비','  SCHEDULED: <2026-10-02 Fri>','\t- LATER 슬라이드','\t\t- 표지','\t\t  메모 줄','\t- 리허설','\t- 새 일','\t- LATER 새 할 일','- 다른 블록','']);
+  eq('하위 블록 없으면 탭 한 칸, 본문 다음',addChildren(K,kb[4],['a']).split('\n').slice(6,9),['- 다른 블록','\t- a','']);
+  eq('중간 블록의 하위(손자 단계)',addChildren(K,kb[1],['뒷표지']).split('\n').slice(3,6),['\t\t- 표지','\t\t  메모 줄','\t\t- 뒷표지']);
+  eq('빈 줄은 무시',addChildren(K,kb[0],['',' ']),K);
+  const S2='- a\n  - b\n- c';
+  eq('스페이스 들여쓰기 따라감',addChildren(S2,parseFile('pages/s.md',S2,jre).blocks[1],['x']),'- a\n  - b\n    - x\n- c');
+  eq('파일 끝 개행 없음',addChildren('- a',parseFile('pages/e.md','- a',jre).blocks[0],['b']),'- a\n\t- b');
+  const K2='- a\n\n\n- b\n';
+  eq('뒤 빈 줄 앞에 넣음',addChildren(K2,parseFile('pages/e.md',K2,jre).blocks[0],['x']),'- a\n\t- x\n\n\n- b\n');
+  const KC=K.replace(/\n/g,'\r\n');const kc=addChildren(KC,parseFile('pages/k.md',KC,jre).blocks[0],['x']);
+  eq('addChildren CRLF 유지',kc.includes('\t- x\r\n')&&!/[^\r]\n/.test(kc),true);
+
+  /* 하위 블록 삭제 */
+  const D='- NOW 발표 준비\n  SCHEDULED: <2026-10-02 Fri>\n\t- LATER 슬라이드\n\t\t- 표지\n\t\t  메모 줄\n\t- 리허설\n\t  :LOGBOOK:\n\t  :END:\n- 다른 블록\n';
+  const db=parseFile('pages/d.md',D,jre).blocks;  // 0 발표, 1 슬라이드, 2 표지, 3 리허설, 4 다른 블록
+  eq('하위째 삭제(손자, 본문 포함)',removeBlocks(D,[db[1]]),'- NOW 발표 준비\n  SCHEDULED: <2026-10-02 Fri>\n\t- 리허설\n\t  :LOGBOOK:\n\t  :END:\n- 다른 블록\n');
+  eq('손자만 삭제',removeBlocks(D,[db[2]]).split('\n').slice(2,4),['\t- LATER 슬라이드','\t- 리허설']);
+  eq('본문(LOGBOOK) 있는 마지막 하위 삭제',removeBlocks(D,[db[3]]).split('\n').slice(-3),['\t\t  메모 줄','- 다른 블록','']);
+  eq('여러 개 한 번에(순서 무관)',removeBlocks(D,[db[3],db[1]]),'- NOW 발표 준비\n  SCHEDULED: <2026-10-02 Fri>\n- 다른 블록\n');
+  eq('파일 끝 블록 삭제해도 끝 개행 유지',removeBlocks(D,[db[4]]).endsWith('\t  :END:\n'),true);
+  eq('빈 목록이면 그대로',removeBlocks(D,[]),D);
+  const dl=D.split('\n');dl.splice(2,0,'\t- 새로 생긴 줄');const moved=dl.join('\n');
+  eq('줄이 밀려도 찾아서 삭제',removeBlocks(moved,[db[3]]).includes('리허설'),false);
+  let e3='';try{removeBlocks('- 다른 파일',[db[1]]);}catch(e){e3=e.message;}
+  eq('못 찾으면 에러',!!e3,true);
+  const DC=D.replace(/\n/g,'\r\n');const dc=removeBlocks(DC,[parseFile('pages/d.md',DC,jre).blocks[1]]);
+  eq('삭제 CRLF 유지',dc.includes('\r\n')&&!/[^\r]\n/.test(dc)&&!dc.includes('슬라이드'),true);
+  eq('삭제 후 추가(같은 부모)',addChildren(removeBlocks(D,[db[1]]),db[0],['새 하위']).split('\n').slice(2,6),['\t- 리허설','\t  :LOGBOOK:','\t  :END:','\t- 새 하위']);
+
+  /* edited: (git blame) */
+  const at=iso=>new Date(iso+'T12:00:00').getTime();
+  const E=['- DONE 옛날 일','  :LOGBOOK:','  CLOCK: [2026-09-01 Tue 10:00:00]--[2026-09-01 Tue 11:00:00] =>  01:00:00','  :END:','\t- LATER 하위 블록','','- DONE 어제 한 일','  SCHEDULED: <2026-09-28 Mon>','- 메모'].join('\n');
+  const eb=parseFile('journals/2026_09_01.md',E,jre).blocks;
+  eq('블록 자기 줄 범위',eb.map(b=>[b.line,b.end]),[[0,4],[4,5],[6,8],[8,9]]);
+  eq('blame 없으면 null',eb.map(b=>b.edited),[null,null,null,null]);
+  // 1~4줄: 9/1, 5~6줄: 9/20, 7줄: 9/2, 8줄(SCHEDULED): 9/28, 9줄: 없음
+  applyBlame(eb,[[1,4,at('2026-09-01')],[5,6,at('2026-09-20')],[7,7,at('2026-09-02')],[8,8,at('2026-09-28')]]);
+  eq('블록 수정일 = 자기 줄 중 최근',eb.map(b=>b.edited),['2026-09-01','2026-09-20','2026-09-28',null]);
+  eq('하위 블록 수정은 부모에 안 섞임',eb[0].edited,'2026-09-01');
+  const qe=s=>eb.map(b=>matchQuery(b,parseQuery(s),T));
+  eq('edited:7d',qe('edited:7d'),[false,false,true,false]);
+  eq('edited:30d',qe('edited:30d'),[true,true,true,false]);
+  eq('edited:yesterday',qe('edited:yesterday'),[false,false,true,false]);
+  eq('edited:날짜',qe('edited:2026-09-20'),[false,true,false,false]);
+  eq('edited:none',qe('edited:none'),[false,false,false,true]);
+  eq('is:done edited:7d',qe('is:done edited:7d'),[false,false,true,false]);
+  eq('-edited:7d',qe('is:task -edited:7d'),[true,true,false,false]);
 
   const bad=R.filter(x=>!x.ok);
   document.getElementById('sum').innerHTML='<span class="'+(bad.length?'bad':'ok')+'">'+(R.length-bad.length)+'/'+R.length+' 통과</span>';
